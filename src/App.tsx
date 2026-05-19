@@ -62,6 +62,9 @@ export default function App() {
   const [activeDrag, setActiveDrag] = useState<{ num: number, x: number; y: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Constants
+  const GRID_SIZE = 6;
+
   // Initialize
   const startNewGame = useCallback(() => {
     const { initial, solved } = generateSudoku(16);
@@ -170,21 +173,32 @@ export default function App() {
     setNumberWithValue(selectedCell.r, selectedCell.c, num);
   }, [selectedCell, setNumberWithValue]);
 
-  // Use a ref to keep track of active drag for the effect below (prevents stale closures)
+  // Mobile Drag Logic: Using native events to ensure non-passive behavior
   const activeDragRef = useRef(activeDrag);
   useEffect(() => {
     activeDragRef.current = activeDrag;
   }, [activeDrag]);
 
-  // Touch handlers attached to container for non-passive behavior (blocks scrolling)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    // Handle styles on body when drag starts/ends
+    if (activeDrag) {
+      document.body.style.overflow = 'hidden';
+      document.body.style.touchAction = 'none';
+      document.body.style.userSelect = 'none';
+    } else {
+      document.body.style.overflow = '';
+      document.body.style.touchAction = '';
+      document.body.style.userSelect = '';
+    }
+
     const onTouchMove = (e: TouchEvent) => {
-      // Check if we are currently dragging a number
       if (activeDragRef.current) {
-        e.preventDefault(); // CRITICAL: Blocks native scroll on mobile
+        // Essential to block native scroll
+        if (e.cancelable) e.preventDefault();
+        
         const touch = e.touches[0];
         setActiveDrag({ 
           num: activeDragRef.current.num, 
@@ -199,9 +213,8 @@ export default function App() {
       
       const touch = e.changedTouches[0];
       const element = document.elementFromPoint(touch.clientX, touch.clientY);
-      
-      // Find the cell button by targeting the data attribute
       const cellElement = element?.closest('[data-cell]');
+      
       if (cellElement) {
         const r = parseInt(cellElement.getAttribute('data-row') || '0');
         const c = parseInt(cellElement.getAttribute('data-col') || '0');
@@ -212,20 +225,25 @@ export default function App() {
       setActiveDrag(null);
     };
 
-    // Add listeners with passive: false to allow preventDefault
-    container.addEventListener('touchmove', onTouchMove, { passive: false });
-    container.addEventListener('touchend', onTouchEnd);
+    // Attach native DOM listeners with { passive: false }
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd, { passive: true });
     
     return () => {
-      container.removeEventListener('touchmove', onTouchMove);
-      container.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      // Clean up styles
+      document.body.style.overflow = '';
+      document.body.style.touchAction = '';
+      document.body.style.userSelect = '';
     };
-  }, [setNumberWithValue]);
+  }, [activeDrag, setNumberWithValue]);
 
   const handleTouchStart = (num: number, e: React.TouchEvent) => {
     if (isGameOver) return;
     const touch = e.touches[0];
     setActiveDrag({ num, x: touch.clientX, y: touch.clientY });
+    haptics.place(); // Brief feedback
   };
 
   const handleDrop = (r: number, c: number, e: React.DragEvent) => {
@@ -326,35 +344,30 @@ export default function App() {
       style={{ backgroundColor: theme.bg, color: theme.text }}
     >
       <svg className="absolute w-0 h-0 invisible">
-        <filter id="wobbly">
-          <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="4" result="noise" />
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="4" />
-        </filter>
-        <filter id="wobbly-lite">
-          <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="3" result="noise" />
-          <feDisplacementMap in="SourceGraphic" in2="noise" scale="2" />
-        </filter>
+        <filter id="wobbly"><feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="4" result="noise" /><feDisplacementMap in="SourceGraphic" in2="noise" scale="4" /></filter>
+        <filter id="wobbly-lite"><feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="3" result="noise" /><feDisplacementMap in="SourceGraphic" in2="noise" scale="2" /></filter>
       </svg>
 
-      {/* Floating Drag Representation for Mobile */}
+      {/* Improved Mobile Ghost Element */}
       <AnimatePresence>
         {activeDrag && (
           <motion.div
-            initial={{ scale: 0, opacity: 0 }}
+            initial={{ scale: 0.5, opacity: 0 }}
             animate={{ 
-              scale: 1.3, 
-              opacity: 0.95, 
+              scale: 1.4, 
+              opacity: 1, 
               x: activeDrag.x - 24, 
-              y: activeDrag.y - 70 
+              y: activeDrag.y - 80 
             }}
-            exit={{ scale: 0, opacity: 0 }}
-            className="fixed z-[100] w-12 h-12 rounded-xl flex items-center justify-center font-black pointer-events-none text-xl shadow-2xl border-2"
+            transition={{ type: 'spring', damping: 20, stiffness: 300, mass: 0.5 }}
+            exit={{ scale: 0.5, opacity: 0 }}
+            className="fixed z-[100] w-12 h-12 rounded-xl flex items-center justify-center font-black pointer-events-none text-2xl shadow-2xl border-2"
             style={{ 
               backgroundColor: theme.primary, 
-              borderColor: isDark ? '#FFF' : 'white',
+              borderColor: isDark ? 'white' : 'white',
               color: isDark ? '#000' : '#FFF',
               fontFamily: visualMode === 'crayon' ? 'Indie Flower' : 'inherit',
-              boxShadow: '0 20px 50px rgba(0,0,0,0.3)'
+              boxShadow: '0 30px 60px rgba(0,0,0,0.5)'
             }}
           >
             {activeDrag.num}
@@ -362,20 +375,23 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <div className="w-full max-w-5xl flex flex-col lg:flex-row landscape:flex-row landscape:items-start landscape:justify-center landscape:gap-8 items-center pointer-events-auto">
+      <div className="w-full max-w-5xl flex flex-col lg:flex-row landscape:flex-row landscape:items-start landscape:justify-center landscape:gap-10 items-center">
         
-        {/* Header Info */}
-        <div className="w-full max-w-sm landscape:max-w-[180px] flex flex-col gap-2 mb-4 landscape:mb-0">
+        {/* Simplified Header */}
+        <div className="w-full max-w-sm landscape:max-w-[170px] flex flex-col gap-2 mb-6 landscape:mb-0">
           <div className="flex items-center justify-between">
             <div className="flex flex-col">
               <h1 className="text-xl landscape:text-base font-black tracking-tighter leading-tight flex items-center gap-2">
                 CGN SUDOKU <Sparkles className="text-yellow-500" size={16} />
               </h1>
-              <p className="text-[10px] opacity-40 font-bold uppercase tracking-widest">{formatTime(currentTime)} • {visualMode}</p>
+              <p className="text-[10px] opacity-40 font-black uppercase tracking-widest">{formatTime(currentTime)} • {visualMode}</p>
             </div>
             <div className="flex items-center gap-1">
               <button onClick={() => setShowStats(true)} className={`p-2 rounded-lg transition-all ${isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-white shadow-sm border border-gray-100 font-bold'}`}><TrendingUp size={16} /></button>
-              <button onClick={() => setVisualMode(v => v === 'light' ? 'focus' : v === 'focus' ? 'crayon' : 'light')} className={`p-2 rounded-lg transition-all ${isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-white shadow-sm border border-gray-100'}`}>
+              <button 
+                onClick={() => setVisualMode(v => v === 'light' ? 'focus' : v === 'focus' ? 'crayon' : 'light')} 
+                className={`p-2 rounded-lg transition-all ${isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-white shadow-sm border border-gray-100'}`}
+              >
                 {visualMode === 'light' && <Sun size={16} />}
                 {visualMode === 'focus' && <Moon size={16} />}
                 {visualMode === 'crayon' && <Palette size={16} />}
@@ -384,9 +400,13 @@ export default function App() {
           </div>
         </div>
 
-        {/* Board Container */}
+        {/* Board Component */}
         <div className="relative group my-4 landscape:my-0 touch-none">
-          <motion.div layout className={`relative grid grid-cols-6 p-1.5 rounded-2xl transition-all ${visualMode === 'crayon' ? 'crayon-border' : isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-gray-100 border border-gray-200'}`} style={{ gap: '2px', backgroundColor: theme.board }}>
+          <motion.div 
+            layout 
+            className={`relative grid grid-cols-6 p-1.5 rounded-2xl transition-all ${visualMode === 'crayon' ? 'crayon-border' : isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-gray-100 border border-gray-200'}`} 
+            style={{ gap: '2px', backgroundColor: theme.board }}
+          >
             {grid.length > 0 && grid.map((row, r) => (
               row.map((cell, c) => {
                 const isInitial = initialGrid[r][c] !== null;
@@ -404,13 +424,13 @@ export default function App() {
                     onClick={() => !isGameOver && setSelectedCell({ r, c })}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={(e) => handleDrop(r, c, e)}
-                    className={`relative w-11 h-11 sm:w-14 sm:h-14 landscape:w-10 landscape:h-10 flex items-center justify-center text-lg sm:text-2xl landscape:text-base font-bold rounded-lg cell-transition touch-none ${visualMode === 'crayon' ? 'crayon-cell' : ''} ${isHinted ? 'hint-flash' : ''}`}
+                    className={`relative w-11 h-11 sm:w-14 sm:h-14 landscape:w-10 landscape:h-10 flex items-center justify-center text-xl sm:text-2xl landscape:text-lg font-black rounded-lg cell-transition touch-none ${visualMode === 'crayon' ? 'crayon-cell' : ''} ${isHinted ? 'hint-flash' : ''}`}
                     style={{
                       backgroundColor: isSelected ? theme.selected : isSameRowCol ? (visualMode === 'crayon' ? 'rgba(255, 202, 58, 0.15)' : isDark ? 'rgba(255,255,255,0.03)' : 'rgba(59,130,246,0.05)') : theme.cell,
-                      color: isWrong ? '#EF4444' : isInitial ? (isDark ? '#555' : theme.secondary) : theme.text,
+                      color: isWrong ? '#EF4444' : isInitial ? (isDark ? '#444' : theme.secondary) : theme.text,
                       marginRight: borderRight ? '4px' : '0',
                       marginBottom: borderBottom ? '4px' : '0',
-                      boxShadow: borderRight ? `2px 0 0 0 ${theme.grid}` : (borderBottom ? `0 2px 0 0 ${theme.grid}` : ''),
+                      boxShadow: borderRight ? `2.5px 0 0 0 ${theme.grid}` : (borderBottom ? `0 2.5px 0 0 ${theme.grid}` : ''),
                     }}
                   >
                     {cell}
@@ -425,68 +445,79 @@ export default function App() {
 
           <AnimatePresence>
             {isGameOver && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 backdrop-blur-[2px] rounded-2xl">
-                <motion.div initial={{ y: 10, scale: 0.9 }} animate={{ y: 0, scale: 1 }} className={`p-6 rounded-3xl flex flex-col items-center text-center gap-3 ${visualMode === 'crayon' ? 'crayon-border bg-white' : isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-white shadow-2xl'}`}>
-                  <div className="w-12 h-12 rounded-2xl bg-green-500/10 text-green-500 flex items-center justify-center"><Trophy size={28} /></div>
-                  <div><h2 className="text-xl font-black">Harika!</h2><p className="text-[10px] opacity-60 font-bold uppercase tracking-widest">{formatTime(currentTime)}</p></div>
-                  <div className="w-24 h-1 bg-gray-100 rounded-full overflow-hidden"><motion.div initial={{ width: '0%' }} animate={{ width: '100%' }} transition={{ duration: 4 }} className="h-full bg-green-500" /></div>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 backdrop-blur-[4px] rounded-2xl">
+                <motion.div initial={{ y: 20, scale: 0.9 }} animate={{ y: 0, scale: 1 }} className={`p-8 rounded-[2.5rem] flex flex-col items-center text-center gap-4 ${visualMode === 'crayon' ? 'crayon-border bg-white' : isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-white shadow-2xl'}`}>
+                  <div className="w-16 h-16 rounded-3xl bg-green-500/10 text-green-500 flex items-center justify-center"><Trophy size={40} /></div>
+                  <div><h2 className="text-2xl font-black mb-1">Mükemmel!</h2><p className="text-xs opacity-50 font-bold tracking-widest uppercase">{formatTime(currentTime)} sürede tamamlandı</p></div>
+                  <div className="w-32 h-1.5 bg-gray-100 rounded-full overflow-hidden"><motion.div initial={{ width: '0%' }} animate={{ width: '100%' }} transition={{ duration: 4 }} className="h-full bg-green-500" /></div>
                 </motion.div>
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
-        {/* Input Controls */}
-        <div className="w-full max-w-sm landscape:max-w-[180px] flex flex-col gap-3 pointer-events-auto">
+        {/* Input & Action Pad */}
+        <div className="w-full max-w-sm landscape:max-w-[180px] flex flex-col gap-4">
           <div className="grid grid-cols-3 landscape:grid-cols-2 gap-2 touch-none">
             {[1, 2, 3, 4, 5, 6].map((num) => (
               <motion.button
                 key={num}
                 draggable
                 onDragStart={(e) => { 
-                  // Standard desktop drag
                   e.dataTransfer.setData('text/plain', num.toString()); 
                   e.dataTransfer.effectAllowed = 'copy'; 
                 }}
                 onTouchStart={(e) => handleTouchStart(num, e)}
-                whileHover={{ scale: 1.05 }} 
-                whileTap={{ scale: 0.95 }}
+                whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                 onClick={() => setNumber(num)}
                 disabled={isGameOver}
-                className={`h-12 landscape:h-10 flex items-center justify-center text-xl font-bold rounded-xl transition-all touch-none select-none ${visualMode === 'crayon' ? 'crayon-button' : isDark ? 'bg-zinc-900 border border-zinc-800' : 'bg-white border border-gray-100 shadow-sm'}`}
-                style={{ 
-                  backgroundColor: visualMode === 'crayon' ? `hsl(${num * 55}, 100%, 93%)` : '', 
-                  color: visualMode === 'crayon' ? `hsl(${num * 55}, 50%, 30%)` : '' 
-                }}
+                className={`h-14 landscape:h-11 flex items-center justify-center text-xl font-bold rounded-2xl transition-all touch-none select-none ${visualMode === 'crayon' ? 'crayon-button' : isDark ? 'bg-zinc-900 border border-zinc-800 hover:bg-zinc-800' : 'bg-white border border-gray-100 shadow-sm hover:border-gray-200'}`}
+                style={{ backgroundColor: visualMode === 'crayon' ? `hsl(${num * 55}, 100%, 93%)` : '', color: visualMode === 'crayon' ? `hsl(${num * 55}, 50%, 30%)` : '' }}
               >
                 {num}
               </motion.button>
             ))}
           </div>
           <div className="flex gap-2">
-            <button onClick={undo} disabled={undoStack.length === 0 || isGameOver} className={`flex-1 h-12 landscape:h-10 rounded-xl flex items-center justify-center gap-2 transition-all border ${undoStack.length > 0 ? (isDark ? 'bg-zinc-900 border border-zinc-800 text-zinc-400' : 'bg-white border border-gray-100 text-gray-500') : 'opacity-20'}`}><Undo2 size={16} /><span className="text-[10px] font-bold uppercase tracking-wider">Geri</span></button>
+            <button 
+              onClick={undo} 
+              disabled={undoStack.length === 0 || isGameOver} 
+              className={`flex-1 h-14 landscape:h-11 rounded-2xl flex items-center justify-center gap-3 transition-all border ${undoStack.length > 0 ? (isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-400' : 'bg-white border-gray-100 text-gray-500 shadow-sm') : 'opacity-20'}`}
+            >
+              <Undo2 size={18} />
+              <span className="text-xs font-black uppercase tracking-widest">Geri</span>
+            </button>
           </div>
           <div className="flex gap-2">
-            <button onClick={getHint} disabled={hintsLeft <= 0 || isGameOver} className={`flex-1 h-12 landscape:h-10 rounded-xl flex flex-col items-center justify-center transition-all border ${hintsLeft > 0 ? (isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-400' : 'bg-white border-gray-100 text-gray-500') : 'opacity-20'}`}>
-              <div className="flex gap-1 mb-0.5">{[1, 2, 3].map(i => <div key={i} className={`w-1 h-1 rounded-full ${i <= hintsLeft ? 'bg-yellow-500' : (isDark ? 'bg-zinc-800' : 'bg-gray-200')}`} />)}</div>
-              <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">İPUCU</span>
+            <button 
+              onClick={getHint} 
+              disabled={hintsLeft <= 0 || isGameOver} 
+              className={`flex-1 h-14 landscape:h-11 rounded-2xl flex flex-col items-center justify-center gap-1 transition-all border ${hintsLeft > 0 ? (isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-400' : 'bg-white border-gray-100 text-gray-500') : 'opacity-20'}`}
+            >
+              <div className="flex gap-1.5">{[1, 2, 3].map(i => <div key={i} className={`w-1.5 h-1.5 rounded-full ${i <= hintsLeft ? 'bg-yellow-500' : (isDark ? 'bg-zinc-800' : 'bg-gray-200')}`} />)}</div>
+              <span className="text-[9px] font-black uppercase tracking-[0.2em] opacity-60">İPUCU</span>
             </button>
-            <button onClick={startNewGame} className={`p-4 landscape:p-2 rounded-xl transition-all shadow-lg ${visualMode === 'crayon' ? 'crayon-button bg-green-100 text-green-700' : 'bg-green-500 text-white shadow-xl shadow-green-500/20 active:scale-95'}`}><Plus size={20} /></button>
+            <button 
+              onClick={startNewGame} 
+              className={`p-5 landscape:p-3 rounded-2xl transition-all shadow-xl ${visualMode === 'crayon' ? 'crayon-button bg-green-100 text-green-700' : 'bg-green-500 text-white shadow-green-500/20 active:scale-90'}`}
+            >
+              <Plus size={24} />
+            </button>
           </div>
         </div>
       </div>
 
       <AnimatePresence>
         {showStats && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm">
-            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className={`w-full max-w-xs rounded-[2rem] p-8 relative ${isDark ? 'bg-zinc-950 border border-zinc-900' : 'bg-white shadow-2xl'}`}>
-              <button onClick={() => setShowStats(false)} className="absolute top-6 right-6 p-2 rounded-full opacity-40 hover:opacity-100"><Plus size={24} className="rotate-45" /></button>
-              <h2 className="text-xl font-black mb-8 flex items-center gap-3">İstatistiklerin</h2>
-              <div className="grid grid-cols-1 gap-2">
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/70 backdrop-blur-md">
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className={`w-full max-w-xs rounded-[2.5rem] p-10 relative ${isDark ? 'bg-zinc-950 border border-zinc-800' : 'bg-white shadow-2xl'}`}>
+              <button onClick={() => setShowStats(false)} className="absolute top-8 right-8 p-2 rounded-full opacity-40 hover:opacity-100"><Plus size={28} className="rotate-45" /></button>
+              <h2 className="text-2xl font-black mb-10 flex items-center gap-3">Kayıtların</h2>
+              <div className="flex flex-col gap-3">
                 {[ { label: 'Oynanan', value: stats.gamesPlayed }, { label: 'Kazanılan', value: stats.gamesWon }, { label: 'En iyi süre', value: stats.bestTime ? formatTime(stats.bestTime) : '--' } ].map((item, i) => (
-                  <div key={i} className={`p-4 rounded-2xl flex items-center justify-between ${isDark ? 'bg-zinc-900/50 text-white' : 'bg-gray-50 text-black'}`}>
+                  <div key={i} className={`p-5 rounded-3xl flex items-center justify-between ${isDark ? 'bg-zinc-900/50 text-white' : 'bg-gray-50 text-black'}`}>
                     <span className="text-xs font-bold opacity-40 uppercase tracking-widest">{item.label}</span>
-                    <span className="text-lg font-black">{item.value}</span>
+                    <span className="text-xl font-black">{item.value}</span>
                   </div>
                 ))}
               </div>
@@ -495,7 +526,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <footer className="mt-8 opacity-20 text-[10px] font-bold tracking-widest uppercase text-center fixed bottom-4 pointer-events-none">Odaklan ve Çöz • CGN SUDOKU</footer>
+      <footer className="mt-10 opacity-30 text-[10px] font-black tracking-[0.3em] uppercase text-center fixed bottom-6 pointer-events-none">Odaklan ve Çöz • CGN SUDOKU</footer>
     </div>
   );
 }
